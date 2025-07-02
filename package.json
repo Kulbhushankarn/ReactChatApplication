@@ -1,0 +1,13 @@
+{
+  "name": "react-chat-application",
+  "version": "1.0.0",
+  "description": "A real-time chat application with React and MongoDB",
+  "scripts": {
+    "start": "cd frontend && npm start",
+    "server": "cd backend && npm start",
+    "dev": "concurrently \"npm run server\" \"npm run start\""
+  },
+  "dependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
