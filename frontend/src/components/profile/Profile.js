@@ -19,7 +19,10 @@ import {
 } from '@mui/material';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
+import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
+import PhotoCamera from '@mui/icons-material/PhotoCamera';
+import UserInfo from './UserInfo';
 import axios from 'axios';
 
 const Profile = () => {
@@ -106,6 +109,45 @@ const Profile = () => {
     }
   };
 
+  const handlePhotoUpload = async (event) => {
+    try {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('profilePhoto', file);
+
+      const response = await axios.post(
+        'http://localhost:5000/api/users/profile/photo',
+        formData,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
+
+      setUser(prev => ({ ...prev, profilePhoto: response.data.profilePhoto }));
+    } catch (err) {
+      console.error('Error uploading profile photo:', err);
+    }
+  };
+
+  const handleDeletePhoto = async () => {
+    try {
+      const response = await axios.delete(
+        'http://localhost:5000/api/users/profile/photo',
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      );
+      setUser(prev => ({ ...prev, profilePhoto: response.data.profilePhoto }));
+    } catch (err) {
+      console.error('Error deleting profile photo:', err);
+    }
+  };
+
   const handleUpdateProfile = async () => {
     try {
       await axios.patch(
@@ -128,10 +170,50 @@ const Profile = () => {
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-          <Avatar
-            src={`http://localhost:5000${user.profilePhoto}`}
-            sx={{ width: 100, height: 100, mr: 3 }}
-          />
+          <Box sx={{ position: 'relative' }}>
+            <Box sx={{ position: 'relative' }}>
+            <Avatar
+              src={`http://localhost:5000${user.profilePhoto}`}
+              sx={{ width: 100, height: 100, mr: 3 }}
+            />
+            {user.profilePhoto !== '/uploads/profiles/default.svg' && (
+              <IconButton
+                size="small"
+                sx={{
+                  position: 'absolute',
+                  top: -10,
+                  right: 14,
+                  bgcolor: 'background.paper',
+                  '&:hover': { bgcolor: 'grey.200' }
+                }}
+                onClick={handleDeletePhoto}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            )}
+          </Box>
+            <input
+              accept="image/*"
+              style={{ display: 'none' }}
+              id="profile-photo-upload"
+              type="file"
+              onChange={handlePhotoUpload}
+            />
+            <label htmlFor="profile-photo-upload">
+              <IconButton
+                sx={{
+                  position: 'absolute',
+                  bottom: 0,
+                  right: 24,
+                  backgroundColor: 'white',
+                  '&:hover': { backgroundColor: '#f5f5f5' }
+                }}
+                component="span"
+              >
+                <PhotoCamera />
+              </IconButton>
+            </label>
+          </Box>
           <Box sx={{ flexGrow: 1 }}>
             {editMode ? (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -181,95 +263,95 @@ const Profile = () => {
         </Box>
       </Paper>
 
-      <Paper sx={{ mb: 3 }}>
-        <Tabs
-          value={tabValue}
-          onChange={(e, newValue) => setTabValue(newValue)}
-          centered
-        >
-          <Tab label="Find Friends" />
-          <Tab
-            label={`Friend Requests (${friendRequests.length})`}
-          />
-        </Tabs>
-        <Divider />
+      <Tabs
+        value={tabValue}
+        onChange={(e, newValue) => setTabValue(newValue)}
+        sx={{ mb: 2 }}
+      >
+        <Tab label="Profile Info" />
+        <Tab label="Find Friends" />
+        <Tab
+          label={`Friend Requests (${friendRequests.length})`}
+        />
+      </Tabs>
 
-        <Box sx={{ p: 2 }}>
-          {tabValue === 0 ? (
-            <>
-              <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-                <TextField
-                  fullWidth
-                  placeholder="Search users..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+      {tabValue === 0 ? (
+        <UserInfo />
+      ) : tabValue === 1 ? (
+        <Paper sx={{ p: 2 }}>
+          <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+            <TextField
+              fullWidth
+              placeholder="Search users..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+            />
+            <IconButton onClick={handleSearch}>
+              <SearchIcon />
+            </IconButton>
+          </Box>
+          <List>
+            {searchResults.map((result) => (
+              <ListItem key={result._id}>
+                <ListItemAvatar>
+                  <Avatar src={`http://localhost:5000${result.profilePhoto}`} />
+                </ListItemAvatar>
+                <ListItemText
+                  primary={result.username}
+                  secondary={result.email}
                 />
-                <IconButton onClick={handleSearch}>
-                  <SearchIcon />
-                </IconButton>
-              </Box>
-              <List>
-                {searchResults.map((result) => (
-                  <ListItem key={result._id}>
-                    <ListItemAvatar>
-                      <Avatar src={`http://localhost:5000${result.profilePhoto}`} />
-                    </ListItemAvatar>
-                    <ListItemText
-                      primary={result.username}
-                      secondary={result.email}
-                    />
-                    <ListItemSecondaryAction>
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        disabled={result.requestSent}
-                        onClick={() => handleSendFriendRequest(result._id)}
-                      >
-                        {result.requestSent ? 'Request Sent' : 'Add Friend'}
-                      </Button>
-                    </ListItemSecondaryAction>
-                  </ListItem>
-                ))}
-              </List>
-            </>
-          ) : (
-            <List>
-              {friendRequests.map((request) => (
-                <ListItem key={request._id}>
-                  <ListItemAvatar>
-                    <Avatar
-                      src={`http://localhost:5000${request.from.profilePhoto}`}
-                    />
-                  </ListItemAvatar>
-                  <ListItemText
-                    primary={request.from.username}
-                    secondary={request.from.email}
+                <ListItemSecondaryAction>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    disabled={result.requestSent}
+                    onClick={() => handleSendFriendRequest(result._id)}
+                  >
+                    {result.requestSent ? 'Request Sent' : 'Add Friend'}
+                  </Button>
+                </ListItemSecondaryAction>
+              </ListItem>
+            ))}
+          </List>
+        </Paper>
+      ) : (
+        <Paper sx={{ p: 2 }}>
+          <List>
+            {friendRequests.map((request) => (
+              <ListItem key={request._id}>
+                <ListItemAvatar>
+                  <Avatar
+                    src={`http://localhost:5000${request.from.profilePhoto}`}
                   />
-                  <ListItemSecondaryAction>
-                    <IconButton
-                      color="primary"
-                      onClick={() =>
-                        handleFriendRequest(request._id, 'accepted')
-                      }
-                    >
-                      <CheckIcon />
-                    </IconButton>
-                    <IconButton
-                      color="error"
-                      onClick={() =>
-                        handleFriendRequest(request._id, 'rejected')
-                      }
-                    >
-                      <CloseIcon />
-                    </IconButton>
-                  </ListItemSecondaryAction>
-                </ListItem>
-              ))}
-            </List>
-          )}
-        </Box>
-      </Paper>
+                </ListItemAvatar>
+                <ListItemText
+                  primary={request.from.username}
+                  secondary={request.from.email}
+                />
+                <ListItemSecondaryAction>
+                  <IconButton
+                    color="primary"
+                    onClick={() =>
+                      handleFriendRequest(request._id, 'accepted')
+                    }
+                  >
+                    <CheckIcon />
+                  </IconButton>
+                  <IconButton
+                    color="error"
+                    onClick={() =>
+                      handleFriendRequest(request._id, 'rejected')
+                    }
+                  >
+                    <CloseIcon />
+                  </IconButton>
+                </ListItemSecondaryAction>
+              </ListItem>
+            ))}
+          </List>
+        </Paper>
+      )}
     </Container>
   );
 };

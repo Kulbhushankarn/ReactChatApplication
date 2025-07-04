@@ -2,6 +2,8 @@ const router = require('express').Router();
 const Message = require('../models/Message');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
+const { getCache, setCache, deleteCache } = require('../utils/cache');
+const cacheMiddleware = require('../middleware/cache');
 
 // Middleware to verify JWT token
 const auth = async (req, res, next) => {
@@ -54,26 +56,104 @@ router.post('/:receiverId', auth, upload.single('attachment'), async (req, res) 
     });
 
     await message.save();
+    
+    // Create a notification for the receiver
+    const Notification = require('../models/Notification');
+    const notification = new Notification({
+      recipient: req.params.receiverId,
+      sender: req.userId,
+      type: 'message',
+      message: message._id,
+      content: messageType === 'text' ? 
+        content.length > 30 ? content.substring(0, 30) + '...' : content :
+        `New ${messageType} message`
+    });
+    
+    await notification.save();
+    
+    // Emit socket event for notification if available
+    if (req.app.get('io')) {
+      const io = req.app.get('io');
+      io.to(req.params.receiverId).emit('notification', notification);
+    }
+    
+    // Invalidate cache for this conversation
+    // Use pattern to delete all cached pages for this conversation
+    await deleteCache(`messages:${req.userId}:${req.params.receiverId}:*`);
+    await deleteCache(`messages:${req.params.receiverId}:${req.userId}:*`);
+    
     res.status(201).json(message);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 });
 
-// Get conversation history
-router.get('/:userId', auth, async (req, res) => {
+// Get conversation history with pagination
+router.get('/:userId', auth, (req, res, next) => {
+  // Only cache pages > 0 to keep recent messages fresh
+  const page = parseInt(req.query.page) || 0;
+  
+  if (page > 0) {
+    // Use cache middleware with custom key generator
+    const cacheKeyGenerator = (req) => {
+      const page = parseInt(req.query.page) || 0;
+      const limit = parseInt(req.query.limit) || 50;
+      return `messages:${req.userId}:${req.params.userId}:${page}:${limit}`;
+    };
+    
+    // Apply cache middleware for this request only
+    return cacheMiddleware(300, cacheKeyGenerator)(req, res, next);
+  }
+  
+  // Skip cache for page 0 (most recent messages)
+  next();
+}, async (req, res) => {
   try {
-    const messages = await Message.find({
+    const page = parseInt(req.query.page) || 0;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = page * limit;
+    
+    // Query to exclude deleted messages
+    const query = {
       $or: [
         { sender: req.userId, receiver: req.params.userId },
         { sender: req.params.userId, receiver: req.userId }
-      ]
-    })
-    .sort({ createdAt: 1 })
-    .populate('sender', 'username profilePhoto')
-    .populate('receiver', 'username profilePhoto');
+      ],
+      deletedFor: {
+        $not: {
+          $elemMatch: {
+            $or: [
+              { user: req.userId, deletedForEveryone: false },
+              { deletedForEveryone: true }
+            ]
+          }
+        }
+      }
+    };
+    
+    // Get total count for pagination info
+    const total = await Message.countDocuments(query);
+    
+    // Get messages with pagination
+    const messages = await Message.find(query)
+      .sort({ createdAt: -1 }) // Newest first
+      .skip(skip)
+      .limit(limit)
+      .populate('sender', 'username profilePhoto')
+      .populate('receiver', 'username profilePhoto')
+      .lean(); // Convert to plain JS objects for better performance
 
-    res.json(messages);
+    const result = {
+      messages: messages.reverse(), // Reverse to get chronological order
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit)
+      }
+    };
+
+    res.json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -91,6 +171,13 @@ router.patch('/:messageId/read', auth, async (req, res) => {
     if (!message) {
       return res.status(404).json({ message: 'Message not found' });
     }
+    
+    // Mark related notification as read
+    const Notification = require('../models/Notification');
+    await Notification.updateMany(
+      { recipient: req.userId, message: message._id },
+      { isRead: true }
+    );
 
     res.json(message);
   } catch (err) {
@@ -101,16 +188,79 @@ router.patch('/:messageId/read', auth, async (req, res) => {
 // Delete message
 router.delete('/:messageId', auth, async (req, res) => {
   try {
-    const message = await Message.findOneAndDelete({
-      _id: req.params.messageId,
-      sender: req.userId
-    });
+    const { deleteForEveryone } = req.query;
+    const message = await Message.findOne({ _id: req.params.messageId });
 
     if (!message) {
       return res.status(404).json({ message: 'Message not found' });
     }
 
+    // Only sender can delete for everyone
+    if (deleteForEveryone === 'true' && message.sender.toString() !== req.userId) {
+      return res.status(403).json({ message: 'Not authorized to delete for everyone' });
+    }
+
+    if (deleteForEveryone === 'true') {
+      // Mark as deleted for everyone
+      message.deletedFor = [
+        { user: message.sender.toString(), deletedForEveryone: true },
+        { user: message.receiver.toString(), deletedForEveryone: true }
+      ];
+    } else {
+      // Mark as deleted for current user only
+      if (!message.deletedFor.some(df => df.user === req.userId && !df.deletedForEveryone)) {
+        message.deletedFor.push({ user: req.userId, deletedForEveryone: false });
+      }
+    }
+
+    await message.save();
+
+    // Emit socket event for real-time update
+    if (req.app.get('io')) {
+      const io = req.app.get('io');
+      const toUser = message.sender.toString() === req.userId ? message.receiver.toString() : message.sender.toString();
+      io.to(toUser).emit('message deleted', {
+        messageId: message._id,
+        from: req.userId,
+        to: toUser
+      });
+    }
+    
+    // Invalidate cache for this conversation
+    const receiverId = message.sender.toString() === req.userId ? message.receiver.toString() : message.sender.toString();
+    await deleteCache(`messages:${req.userId}:${receiverId}:*`);
+    await deleteCache(`messages:${receiverId}:${req.userId}:*`);
+
     res.json({ message: 'Message deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Get conversation history (updated to handle deleted messages)
+router.get('/:userId', auth, async (req, res) => {
+  try {
+    const messages = await Message.find({
+      $or: [
+        { sender: req.userId, receiver: req.params.userId },
+        { sender: req.params.userId, receiver: req.userId }
+      ],
+      'deletedFor': {
+        $not: {
+          $elemMatch: {
+            $or: [
+              { user: req.userId, deletedForEveryone: false },
+              { deletedForEveryone: true }
+            ]
+          }
+        }
+      }
+    })
+    .sort({ createdAt: 1 })
+    .populate('sender', 'username profilePhoto')
+    .populate('receiver', 'username profilePhoto');
+
+    res.json(messages);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

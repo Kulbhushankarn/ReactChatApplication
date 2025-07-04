@@ -12,7 +12,8 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    trim: true
+    trim: true,
+    lowercase: true
   },
   password: {
     type: String,
@@ -21,7 +22,37 @@ const userSchema = new mongoose.Schema({
   },
   profilePhoto: {
     type: String,
-    default: ''
+    default: '/uploads/profiles/default.svg'
+  },
+  personalInfo: {
+    firstName: String,
+    lastName: String,
+    dateOfBirth: Date,
+    phoneNumber: String,
+    address: {
+      street: String,
+      city: String,
+      state: String,
+      pinCode: String,
+      country: String
+    }
+  },
+  professionalInfo: {
+    designation: String,
+    company: String,
+    education: [{
+      institution: String,
+      degree: String,
+      field: String,
+      startYear: String,
+      endYear: String,
+      type: String
+    }]
+  },
+  interests: {
+    hobbies: [String],
+    skills: [String],
+    languages: [String]
   },
   friends: [{
     type: mongoose.Schema.Types.ObjectId,

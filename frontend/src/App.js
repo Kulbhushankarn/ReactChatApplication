@@ -4,6 +4,7 @@ import { ThemeProvider, createTheme, Box } from '@mui/material';
 import Login from './components/auth/Login';
 import Register from './components/auth/Register';
 import Chat from './components/chat/Chat';
+import GroupManagement from './components/chat/GroupManagement';
 import Profile from './components/profile/Profile';
 import Navigation from './components/common/Navigation';
 
@@ -41,6 +42,14 @@ const App = () => {
             element={
               <PrivateRoute>
                 <Chat />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/groups"
+            element={
+              <PrivateRoute>
+                <GroupManagement />
               </PrivateRoute>
             }
           />
